@@ -37,6 +37,7 @@ typedef enum
 
 void log_init(void);
 void log_printf(const char *format, ...);
+void log_raw(const char *data);
 extern LogLevel g_log_level;
 // 日志输出宏定义
 #define log_debug(...)                                                   \

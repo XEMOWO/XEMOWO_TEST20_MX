@@ -51,28 +51,38 @@
 
 ## 2. 它能做什么？
 
-### 🎯 四大核心功能
+### 🎯 核心功能
 
 | 功能 | 怎么触发 | 实际效果 |
 |------|----------|----------|
-| **开关空调** | 语音 "打开空调" / "关空调" | 继电器吸合 + 红外发射开机码 |
+| **开关空调** | 语音 "打开空调" / "关空调" | 红外发射开机/关机码 |
 | **调温度** | 语音 "调到 26 度" | 红外发射 26°C 温度码 |
 | **切换模式** | 语音 "制冷模式" | 红外发射模式码（自动/制冷/除湿/送风/制热） |
 | **控制灯带** | 语音 "灯带调成蓝色，亮度 50%" | WS2812 全灯变色 |
+| **查询温湿度** | 语音 "现在温度多少" | 返回 SHT30 温度/湿度数值 |
 
-### 🧠 智能联动（不需要语音！）
+### 💡 灯带行为
 
-| 场景 | 怎么触发 | 实际效果 |
-|------|----------|----------|
-| **人走灯灭** | Rd-03L 雷达检测无人超过 5 秒 | 灯带自动熄灭 |
-| **人回灯亮** | 雷达检测到有人回来 | 灯带恢复彩虹呼吸效果 |
+| 说法 | 实际效果 |
+|------|----------|
+| **"开灯"** | 默认暖黄色 (RGB 255,180,50) |
+| **"关灯"** | 完全熄灭，不会自动恢复 |
+| **指定颜色/亮度** | 按指定值显示 |
+
+> 雷达人体存在检测已启用（OT1→PA8，变化时打印日志）；人走关灯等联动逻辑可在此基础上接入。
 
 ### 🖥 OLED 屏幕显示
 
-板子上有一块 128x64 的 OLED 屏幕，用两个按键翻页，共 9 个页面：
+板子上有一块 128x64 的 OLED 屏幕，用两个按键翻页，共 10 个页面：
 
 ```
-第1页 → 系统信息（项目名、传感器状态）
+第1页 → 全屏圆角框：左上 72×32 大表情 + 右上 24×24 状态图标，
+        横线把上方表情区和下方回复区隔开
+        下半屏两行回复（长回复每 2.5 秒自动翻页），只显示 AI 回复正文，
+        MCP_Text/{"state":false} 这类协议内容自动过滤；
+        用户识别结果只短暂回显，AI 正文一到就整体替换
+        （串口日志里分别标为“你说:”和“AI:”）
+        未联网时右上角变 WiFi 断开图标，下半屏显示“未连接网络”
 第2页 → 实时温度
 第3页 → 实时湿度
 第4页 → FreeRTOS 任务监控（栈余量、状态）
@@ -81,11 +91,12 @@
 第7页 → 🐱 猫咪像素动画（28 帧）
 第8页 → 已注册的 MCP 工具列表
 第9页 → 红外学习（按一下按键进入学习模式）
+第10页 → AI 表情演示（72×32 单色表情脸自动轮播）
 ```
 
 ### 🐱 那个猫咪是什么？
 
-一个 28 帧的像素猫咪动画，占 ~28KB Flash。默认是**禁用**的（因为占空间），想开启的话把 `freertos.c` 第 31 行改成：
+一个 28 帧的像素猫咪动画，占 ~28KB Flash。默认是**禁用**的（因为占空间），想开启的话把 `freertos.c` 顶部的 `CAT_ANIMATION_ENABLED` 改成：
 
 ```c
 #define CAT_ANIMATION_ENABLED 1
@@ -115,8 +126,7 @@
 
 | 硬件 | 型号 | 大概多少钱 | 干嘛用 |
 |------|------|-----------|--------|
-| 雷达 | Rd-03L_V2 毫米波 | ~15 元 | 人体存在检测（人走关灯） |
-| 继电器 | SRD-05VDC 模块 | ~3 元 | 控制大功率设备 |
+| 雷达 | Rd-03L_V2 毫米波 | ~15 元 | 人体存在检测 |
 | 中文字库 | GT20L16S | ~8 元 | 显示中文不用自己造字库 |
 
 ---
@@ -132,8 +142,8 @@
                                                                         │
                                                              ┌──────────┼──────────┐
                                                              │          │          │
-                                                          红外员工   灯带员工   继电器员工
-                                                          (发信号)   (变色)    (开关)
+                                                          红外员工   灯带员工   温湿度员工
+                                                          (发信号)   (变色)    (测量)
 ```
 
 ### 技术架构（正经版）
@@ -146,8 +156,8 @@
 │  │default│ │sht3x  │ │ws  ││
 │  │Task   │ │_read  │ │2812││
 │  │       │ │       │ │mode││
-│  │• 串口 │ │• 传感器│ │•LED││
-│  │• MCP  │ │• OLED │ │•雷达││
+│  │• 串口 │ │• 传感器│ │•OLED││
+│  │• MCP  │ │• 按键 │ │•灯带││
 │  └───┬───┘ └───┬───┘ └──┬─┘│
 │      │         │        │   │
 │      └─────────┼────────┘   │
@@ -175,17 +185,17 @@
 步骤1: 你说 "把空调开到26度"
        ↓
 步骤2: AI 模组识别意图，通过 UART2 发 JSON 给 STM32：
-       {"name":"temperature","value":26}
+       {"role":"AI board","msgType":"mcp_set","tools":"ac","data":{"temperature":26}}
        ↓
 步骤3: STM32 串口收到，emMCP 解析 JSON
        ↓
-步骤4: emMCP 找到 "temperature" 对应的处理函数
+步骤4: emMCP 找到 "ac" 对应的处理函数
        ↓
 步骤5: 处理函数调用 HXD039B2 红外模块，发射 26°C 温度码
        ↓
 步骤6: 空调收到红外信号，设定为 26°C
        ↓
-步骤7: STM32 回复 {"ctrl":"ok"} 给 AI 模组
+步骤7: STM32 回复 mcp-responsive {"role":"MCU","msgType":"status","data":true} 给 AI 模组
        ↓
 步骤8: AI 模组语音回复 "好的，已调到 26 度"
 ```
@@ -258,11 +268,22 @@ cmake --build build/Debug
 如果一切正常，你会看到：
 
 ```
-[57/57] Linking C executable XEMOWO_TEST20.elf
+[29/29] Linking C executable XEMOWO_TEST20.elf
 Memory region         Used Size  Region Size  %age Used
-             RAM:       16736 B        20 KB     81.72%
-           FLASH:       98788 B       128 KB     75.37%
+             RAM:       16192 B        20 KB     79.06%
+           FLASH:       91528 B       128 KB     69.83%
 ```
+
+> 💡 **要放 UI 动画时用 Release 构建**（`-Os`，已保留 `-g3` 调试符号）：
+>
+> ```bash
+> cmake --preset Release
+> cmake --build build/Release
+> # 产物: build/Release/XEMOWO_TEST20.bin
+> ```
+>
+> Release 实测 RAM 15896 B (77.62%)、Flash 73296 B (55.92%)，比 Debug 少约 17KB
+> Flash 空间，可用于存放动画帧。
 
 ### 6.2 烧录到开发板
 
@@ -290,8 +311,7 @@ openocd -f openocd.cfg -c "program build/Debug/XEMOWO_TEST20.bin 0x08000000 veri
 | PB6 (SDA) | SHT3x | I²C 数据 |
 | PB7 (SCL) | SHT3x | I²C 时钟 |
 | PA11 | WS2812 DIN | 灯带数据 |
-| PA8 | Rd-03L OT1 | 雷达人体检测 |
-| PB5 | 继电器 IN | 开关控制 |
+| PA8 | Rd-03L OT1 | 雷达人体存在检测 |
 | PB4 | 按键 1 | OLED 上翻页 |
 | PB8 | 按键 2 | OLED 下翻页 |
 | PB1 | HXD039B2 BUSY | 红外忙检测 |
@@ -302,7 +322,7 @@ openocd -f openocd.cfg -c "program build/Debug/XEMOWO_TEST20.bin 0x08000000 veri
 
 ### 7.1 看 OLED 屏幕
 
-上电后 OLED 会显示第 1 页（系统信息），按 PB4/PB8 翻页。
+上电后 OLED 会显示第 1 页（AI 表情页），按 PB4/PB8 翻页。
 
 如果第 2、3 页显示温度湿度，说明 SHT3x 正常工作。如果显示 "ERR"，说明传感器没接好或 I²C 线有问题。
 
@@ -311,7 +331,7 @@ openocd -f openocd.cfg -c "program build/Debug/XEMOWO_TEST20.bin 0x08000000 veri
 用 USB 转串口接 PA9 (TX)，波特率 1500000，打开串口助手（推荐 MobaXterm 或 Putty），你会看到：
 
 ```
-[INFO] emMCP init done, MAX_TOOLS=7
+[INFO] emMCP init done, MAX_TOOLS=3
 [INFO] sht3x init OK!
 [INFO] system start
 ```
@@ -335,7 +355,7 @@ openocd -f openocd.cfg -c "program build/Debug/XEMOWO_TEST20.bin 0x08000000 veri
 接上 PA3 (USART2 RX)，用串口助手发送：
 
 ```json
-{"role":"AI board","msgType":"mcp_set","tools":"relay","data":{"state":"on"}}
+{"role":"AI board","msgType":"mcp_set","tools":"ac","data":{"power":"on"}}
 ```
 
 MCU 应该回复：
@@ -344,31 +364,28 @@ MCU 应该回复：
 mcp-responsive {"role":"MCU","msgType":"status","data":true}
 ```
 
-同时继电器吸合。
+同时红外模块发射空调开机码。
 
 ---
 
 ## 8. MCP 工具详解
 
-项目向 AI 注册了 7 个"工具"，AI 可以通过发送 JSON 来调用它们。
+项目向 AI 注册了 3 个"工具"，AI 可以通过发送 JSON 来调用它们。
 
 | 工具名 | 参数 | 实际动作 |
 |--------|------|----------|
-| `relay` | `state`: on/off | PB5 继电器吸合/释放（空调总电源） |
-| `temperature` | `value`: 16-31 | 红外发射对应温度码 |
-| `acmode` | `value`: auto/cool/dry/fan/heat | 红外发射对应模式码 |
-| `acpower` | `power`: on/off | 红外发射空调开机/关机码 |
-| `acfan` | `speed`: auto/low/mid/high | 红外发射对应风速码 |
-| `ledstrip` | `mode`, `r`, `g`, `b`, `brightness` | WS2812 灯带开关/调色/亮度 |
-| `serial_monitor` | `action`: open/close | 解析串口 `STATUS:n` 并驱动灯带颜色 |
+| `ac` | `power`: on/off；`temperature`: 16-31；`mode`: auto/cool/dry/fan/heat；`fan`: auto/low/mid/high（均可选） | 红外发射空调开关机/温度/模式/风速码 |
+| `ledstrip` | `mode`, `r`, `g`, `b`, `brightness` | WS2812 灯带开关/调色/亮度（开灯默认暖黄，关灯全灭） |
+| `temperature_humidity` | 无参数 | 返回 SHT30 当前温度与湿度 |
 
 **AI 调用示例**：
 ```json
-{"name":"temperature","args":{"value":26}}
-{"name":"ledstrip","args":{"mode":"set","r":255,"g":180,"b":50,"brightness":50}}
+{"role":"AI board","msgType":"mcp_set","tools":"ac","data":{"power":"on","temperature":26,"mode":"cool"}}
+{"role":"AI board","msgType":"mcp_set","tools":"ledstrip","data":{"mode":"set","r":255,"g":180,"b":50,"brightness":50}}
+{"role":"AI board","msgType":"mcp_set","tools":"temperature_humidity","data":{}}
 ```
 
-**实际动作**：红外发射 26°C 温度码；WS2812 灯带全部变暖黄色、50% 亮度
+**实际动作**：红外发射开机 + 26°C + 制冷；WS2812 灯带全部变暖黄色、50% 亮度；返回 `temperature=25.6C,humidity=48.2%`
 
 ---
 
@@ -398,6 +415,10 @@ A:
 3. 波特率必须是 115200
 4. 说"你好小安"看日志有没有 WakeUP 事件
 
+### Q: 改了 MCP 工具后，AI 还在按旧工具执行 / 说没有这个功能
+
+A: AI 模组会缓存工具列表。本固件在收到 `AI Start` 或唤醒事件时会重新发送 `mcp-tool`。烧录新固件后，对模组说一次"你好小安"唤醒即可触发更新；如果仍不生效，给 AI 模组断电重启一次。
+
 ### Q: 猫咪动画开了之后黑屏
 
 A: 动画数据占了 ~28KB Flash，开启后可能超出 STM32F103CBTx 的 128KB Flash 限制。代码里有注释提醒这个。要么换 STM32F103RETx（512KB），要么关掉动画。
@@ -413,7 +434,7 @@ A:
 
 ### Q: 怎么添加自己的 MCP 工具？
 
-A: 在 `freertos.c` 的 `StartDefaultTask` 函数里，参考已有的 7 个工具添加新的。步骤：
+A: 在 `freertos.c` 的 `StartDefaultTask` 函数里，参考已有的 3 个工具添加新的。注意同时修改 `components/emMCP_config.h` 里的 `MCP_SERVER_TOOL_NUMBLE_MAX`。步骤：
 
 ```c
 // 1. 定义工具 + 处理函数
@@ -445,13 +466,13 @@ A: 在 `emMCP_config.h` 里没有直接的波特率配置，因为默认 115200 
 ### 🟢 入门级（不需要改代码）
 
 - 把猫咪动画打开（改一个宏定义）
-- 用串口助手手动发 JSON 测试 7 个工具
+- 用串口助手手动发 JSON 测试 3 个工具
 - 改 OLED 第 1 页显示的文案
 
 ### 🟡 进阶级（需要写一点代码）
 
-- 加第 8 个 MCP 工具（比如控制风扇、窗帘）
-- 修改雷达检测阈值（改 `AXK_RADAR_ABSENT_THRESHOLD`）
+- 加第 4 个 MCP 工具（比如控制风扇、窗帘）
+- 恢复雷达联动（驱动仍在 `components/radar/`，重新接入任务即可）
 - 加一个新的 OLED 页面（比如显示系统运行时间）
 
 ### 🔴 硬核级

@@ -39,11 +39,11 @@ extern "C" {
 #define emMCP_free      vPortFree
 #define emMCP_delay     osDelay
 
-/* 工具数量上限：覆盖 emMCP.h 中的默认值 3 → 3 */
+/* 工具数量上限：空调 / 灯带 / 温湿度查询 共 3 个 */
 #ifdef MCP_SERVER_TOOL_NUMBLE_MAX
 #undef MCP_SERVER_TOOL_NUMBLE_MAX
 #endif
-#define MCP_SERVER_TOOL_NUMBLE_MAX 7
+#define MCP_SERVER_TOOL_NUMBLE_MAX 3
 
 /* 手动模式：只用手写 JSON 字符串注册工具到 AI 模组，
    emMCP_AddToolToToolList 只注册到静态数组（mcp_tool_arry），

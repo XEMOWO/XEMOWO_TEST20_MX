@@ -27,8 +27,22 @@ void log_printf(const char *format, ...) {
   va_start(args, format);
   int len = vsnprintf(buffer, LOG_BUFFER_SIZE, format, args);
   va_end(args);
-  HAL_UART_Transmit(&huart1, (uint8_t *)buffer, len, 100);
+  /* vsnprintf 返回的是“原本想写多少”，超长时必须按实际写入量截断，
+   * 否则 HAL_UART_Transmit 会越界读栈上的 buffer */
+  if (len < 0) return;
+  if (len >= LOG_BUFFER_SIZE) len = LOG_BUFFER_SIZE - 1;
+  HAL_UART_Transmit(&huart1, (uint8_t *)buffer, (uint16_t)len, 100);
   //   HAL_UART_Transmit_DMA(&huart1, (uint8_t *)buffer, len);
+}
+
+/* 原样输出一段字符串：不做格式化、不截断（仅按 strlen 发送），
+ * 用于把语音模组的整帧 JSON 直接打到日志串口 */
+void log_raw(const char *data) {
+  if (data == NULL) return;
+  size_t len = strlen(data);
+  if (len == 0) return;
+  if (len > 0xFFFFu) len = 0xFFFFu;
+  HAL_UART_Transmit(&huart1, (uint8_t *)data, (uint16_t)len, 100);
 }
 
 /**

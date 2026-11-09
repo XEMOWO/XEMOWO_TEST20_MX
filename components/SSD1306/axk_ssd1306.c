@@ -24,7 +24,7 @@
 #endif
 // 全局变量，用于字库地址计算
 unsigned int axk_ssd1306_font_addr = 0;
-unsigned char axk_oled_gram[144][8];
+unsigned char axk_oled_gram[128][8];
 /**
  * @brief 向 SSD1306 写入一个字节
  *
